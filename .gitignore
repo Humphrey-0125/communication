@@ -1,2 +1,8 @@
-result/
-test*
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+reference/
+outputs/

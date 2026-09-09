@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blindfugue"
+version = "0.1.0"
+description = "A minimal demand-driven peer communication prototype."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["openai>=1.0", "requests>=2.31"]
+
+[project.scripts]
+blindfugue = "blindfugue.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["blindfugue*"]
