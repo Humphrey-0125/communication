@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from blindfugue.core import BlindFugue, EpisodeStore, OpenAIChatModel, extract_json_object
 from blindfugue.dataset import load_jsonl, run_dataset
+from blindfugue.naive import NaiveTeam
 from blindfugue.tools import (
     CodeInterpreterTool,
     GoogleScholarTool,
@@ -81,6 +82,68 @@ class FakeModel:
 class CoreTests(unittest.TestCase):
     def test_extract_json_object(self) -> None:
         self.assertEqual(extract_json_object("prefix {\"x\": 1} suffix"), {"x": 1})
+
+    def test_naive_decompose_research_and_synthesize(self) -> None:
+        class NaiveFakeModel:
+            def __init__(self) -> None:
+                self.tool_calls: list[list[str]] = []
+
+            def complete(self, *, system: str, user: str, tools=None) -> str:
+                self.tool_calls.append([tool.name for tool in (tools or [])])
+                if "raw JSON array" in user:
+                    return json.dumps(
+                        [
+                            {"title": "Identify paper", "task": "Find the exact title."},
+                            {"title": "Verify author", "task": "Find the first author."},
+                        ]
+                    )
+                if "final synthesis phase" in user:
+                    return (
+                        "Explanation: The two reports identify the paper and author.\n"
+                        "Exact Answer: Attention Is All You Need; Ashish Vaswani\n"
+                        "Confidence: 95%"
+                    )
+                if "SearchAgent-1" in user:
+                    return "The title is Attention Is All You Need."
+                if "SearchAgent-2" in user:
+                    return "Ashish Vaswani is listed first."
+                raise AssertionError("Unexpected prompt")
+
+        model = NaiveFakeModel()
+        result = NaiveTeam(
+            model,
+            subagent_count=2,
+            tools=[CodeInterpreterTool()],
+        ).run("Identify the Transformer paper and first author.")
+        self.assertEqual(result.answer, "Attention Is All You Need; Ashish Vaswani")
+        self.assertEqual(result.confidence, 95.0)
+        self.assertEqual(len(result.decomposition), 2)
+        self.assertEqual(len(result.subagent_results), 2)
+        self.assertEqual(model.tool_calls.count([]), 1)
+        self.assertEqual(model.tool_calls.count(["code_interpreter"]), 3)
+
+    def test_naive_isolates_subagent_failure(self) -> None:
+        class PartlyFailingModel:
+            def complete(self, *, system: str, user: str, tools=None) -> str:
+                if "raw JSON array" in user:
+                    return json.dumps(
+                        [
+                            {"title": "A", "task": "Find A."},
+                            {"title": "B", "task": "Find B."},
+                        ]
+                    )
+                if "final synthesis phase" in user:
+                    self.assert_error_visible = "TimeoutError" in user
+                    return "Exact Answer: A\nConfidence: 60%"
+                if "SearchAgent-2" in user:
+                    raise TimeoutError("slow provider")
+                return "Evidence for A."
+
+        model = PartlyFailingModel()
+        result = NaiveTeam(model, subagent_count=2).run("Question?")
+        self.assertEqual(result.answer, "A")
+        self.assertTrue(result.subagent_results[1].error.startswith("TimeoutError"))
+        self.assertTrue(model.assert_error_visible)
 
     def test_store_hides_requester_episode(self) -> None:
         store = EpisodeStore()
@@ -230,6 +293,7 @@ class CoreTests(unittest.TestCase):
                 dataset_path=dataset_path,
                 output_path=output_path,
                 limit=2,
+                workers=2,
             )
             second = run_dataset(
                 team,

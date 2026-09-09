@@ -7,6 +7,7 @@ from blindfugue.core import (
     TeamOutcome,
 )
 from blindfugue.dataset import load_jsonl, run_dataset
+from blindfugue.naive import NaiveOutcome, NaiveTeam
 from blindfugue.tools import (
     CodeInterpreterTool,
     GoogleScholarTool,
@@ -22,6 +23,8 @@ __all__ = [
     "NeedState",
     "OpenAIChatModel",
     "TeamOutcome",
+    "NaiveTeam",
+    "NaiveOutcome",
     "SearchTool",
     "VisitTool",
     "GoogleScholarTool",

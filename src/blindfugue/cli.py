@@ -7,6 +7,7 @@ from pathlib import Path
 
 from blindfugue.core import BlindFugue, OpenAIChatModel
 from blindfugue.dataset import run_dataset
+from blindfugue.naive import NaiveTeam
 from blindfugue.tools import build_default_tools
 
 
@@ -36,15 +37,36 @@ def _optional_bool(value: str | None) -> bool | None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the minimal BlindFugue prototype.")
+    parser = argparse.ArgumentParser(description="Run BlindFugue or the Cabeza-style naive baseline.")
     parser.add_argument("question", nargs="?", help="Question all peers solve independently.")
     parser.add_argument("--dataset", default="", help="JSONL dataset path.")
-    parser.add_argument("--limit", type=int, default=3, help="Number of dataset samples to run.")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=3,
+        help="Number of dataset samples to run; 0 runs the full dataset.",
+    )
+    parser.add_argument("--workers", type=int, default=1, help="Parallel dataset samples.")
     parser.add_argument("--output", default="outputs/bc_results.jsonl")
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--peers", type=int, default=2)
+    parser.add_argument(
+        "--mode",
+        choices=["blindfugue", "naive"],
+        default="blindfugue",
+        help="naive runs meta decomposition, N subagents, and meta synthesis.",
+    )
+    parser.add_argument("--n", type=int, default=None, help="Subagent count for naive mode.")
     parser.add_argument("--tools", choices=["all", "none"], default="all")
     parser.add_argument("--max-tool-rounds", type=int, default=None)
+    parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Maximum output tokens per call; 0 omits the API field.",
+    )
+    parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--model", default="")
     parser.add_argument("--base-url", default="")
     parser.add_argument("--api-key", default="")
@@ -65,13 +87,23 @@ def main(argv: list[str] | None = None) -> int:
             "BLINDFUGUE_BASE_URL in project/.env."
         )
 
+    env_max_tokens = int(os.environ.get("BLINDFUGUE_MAX_TOKENS", "1000"))
+    max_tokens = env_max_tokens if args.max_tokens is None else args.max_tokens
     chat_model = OpenAIChatModel(
         model=model_name,
         base_url=base_url,
         api_key=api_key,
-        temperature=float(os.environ.get("BLINDFUGUE_TEMPERATURE", "0.3")),
-        max_tokens=int(os.environ.get("BLINDFUGUE_MAX_TOKENS", "1000")),
-        timeout=float(os.environ.get("BLINDFUGUE_TIMEOUT", "120")),
+        temperature=(
+            args.temperature
+            if args.temperature is not None
+            else float(os.environ.get("BLINDFUGUE_TEMPERATURE", "0.3"))
+        ),
+        max_tokens=None if max_tokens == 0 else max_tokens,
+        timeout=(
+            args.timeout
+            if args.timeout is not None
+            else float(os.environ.get("BLINDFUGUE_TIMEOUT", "120"))
+        ),
         enable_thinking=_optional_bool(os.environ.get("BLINDFUGUE_ENABLE_THINKING")),
         max_tool_rounds=(
             args.max_tool_rounds
@@ -80,9 +112,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     tools = build_default_tools() if args.tools == "all" else []
-    team = BlindFugue(chat_model, peer_count=args.peers, tools=tools)
+    if args.mode == "naive":
+        subagent_count = args.n if args.n is not None else args.peers
+        team = NaiveTeam(chat_model, subagent_count=subagent_count, tools=tools)
+        print(f"[blindfugue] mode=naive N={subagent_count}")
+    else:
+        team = BlindFugue(chat_model, peer_count=args.peers, tools=tools)
     if tools:
-        print("[blindfugue] peer tools: " + ", ".join(tool.name for tool in tools))
+        print("[blindfugue] agent tools: " + ", ".join(tool.name for tool in tools))
         if not os.environ.get("SERPER_API_KEY"):
             print("[blindfugue] warning: search and google_scholar need SERPER_API_KEY")
         if not os.environ.get("JINA_API_KEY"):
@@ -102,8 +139,9 @@ def main(argv: list[str] | None = None) -> int:
             team,
             dataset_path=dataset_path,
             output_path=output_path,
-            limit=args.limit,
+            limit=None if args.limit == 0 else args.limit,
             resume=not args.no_resume,
+            workers=args.workers,
             progress=show_progress,
         )
         print("\n===== Dataset summary =====")
@@ -117,13 +155,20 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n===== Final answer =====")
     print(result.answer)
-    print("\n===== Communication trace =====")
-    for peer in result.peers:
-        source = peer.route.source_owner or "none"
-        episode = peer.route.episode_id or "none"
-        print(f"\n[{peer.peer_id}]")
-        print(f"Need: {peer.need.missing_information}")
-        print(f"Route: {episode} from {source}")
-        print(f"Delta: {peer.delta.delta or '[no useful delta]'}")
-        print(f"Revised answer: {peer.final_answer}")
+    if args.mode == "naive":
+        if result.confidence is not None:
+            print(f"Confidence: {result.confidence:.1f}%")
+        print("\n===== Decomposition =====")
+        for task in result.decomposition:
+            print(f"{task.id + 1}. {task.title}: {task.task}")
+    else:
+        print("\n===== Communication trace =====")
+        for peer in result.peers:
+            source = peer.route.source_owner or "none"
+            episode = peer.route.episode_id or "none"
+            print(f"\n[{peer.peer_id}]")
+            print(f"Need: {peer.need.missing_information}")
+            print(f"Route: {episode} from {source}")
+            print(f"Delta: {peer.delta.delta or '[no useful delta]'}")
+            print(f"Revised answer: {peer.final_answer}")
     return 0

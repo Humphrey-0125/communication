@@ -76,6 +76,35 @@ python -m blindfugue `
 
 数据集按顺序执行，结果在每条完成后立即写入。再次运行同一命令时，默认跳过输出文件中已经成功的样例。使用 `--no-resume` 可以覆盖输出并重新执行。
 
+### Cabeza-style naive 基线
+
+`naive` 模式先由 meta-agent 把原问题分成 N 个互补子任务，再由 N 个 sub-agent
+并行检索，最后由 meta-agent 综合全部报告。第一次 meta 调用只负责分解；
+sub-agent 和最终综合阶段可以使用四个工具。N 不包含 meta-agent。
+
+下面的参数对应 Cabeza 的 BrowseComp 示例：温度 0、4 轮工具调用、单次请求超时
+90 秒、关闭 thinking；`--max-tokens 0` 表示不向 API 发送输出 token 上限。
+
+```powershell
+python -m blindfugue --mode naive --n 2 `
+  --dataset data/bc/eval.jsonl --limit 3 `
+  --output outputs/bc_naive_n2.jsonl --no-resume `
+  --temperature 0 --max-tool-rounds 4 --timeout 90 --max-tokens 0
+```
+
+`team_result.decomposition` 保存任务分解，`team_result.subagent_results` 保存各子任务
+报告，`team_result.meta_synthesis_raw` 保存 meta-agent 的完整最终输出。
+
+运行完整数据集时使用 `--limit 0`。下面使用 Cabeza 示例相同的两个数据集 worker；
+输出文件支持断点续跑：
+
+```powershell
+python -m blindfugue --mode naive --n 2 --workers 2 `
+  --dataset data/bc/eval.jsonl --limit 0 `
+  --output outputs/bc_naive_qwen35_n2_full.jsonl `
+  --temperature 0 --max-tool-rounds 4 --timeout 90 --max-tokens 0
+```
+
 工具错误会作为观察结果返回给 peer，不会直接终止样例；数据集运行器也会隔离单条失败并继续处理后续样例。没有 `SERPER_API_KEY` 时，`search` 和
 `google_scholar` 会报告未配置，BrowseComp 的事实检索能力仍然有限。
 

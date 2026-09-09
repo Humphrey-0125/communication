@@ -59,14 +59,14 @@ class OpenAIChatModel:
         base_url: str,
         api_key: str = "EMPTY",
         temperature: float = 0.3,
-        max_tokens: int = 1000,
+        max_tokens: int | None = 1000,
         timeout: float = 120.0,
         enable_thinking: bool | None = None,
         max_tool_rounds: int = 4,
     ) -> None:
         self.model = model
         self.temperature = float(temperature)
-        self.max_tokens = int(max_tokens)
+        self.max_tokens = None if max_tokens is None else int(max_tokens)
         self.enable_thinking = enable_thinking
         self.max_tool_rounds = max(0, int(max_tool_rounds))
         self.client = OpenAI(
@@ -124,7 +124,7 @@ class OpenAIChatModel:
                 messages.append(
                     {
                         "role": "user",
-                        "content": "Tool budget reached. Return the requested final JSON now.",
+                        "content": "Tool budget reached. Return the requested final response now.",
                     }
                 )
                 forced_final = True
@@ -133,8 +133,9 @@ class OpenAIChatModel:
                 "model": self.model,
                 "messages": messages,
                 "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
             }
+            if self.max_tokens is not None:
+                request["max_tokens"] = self.max_tokens
             if self.enable_thinking is not None:
                 request["extra_body"] = {"enable_thinking": self.enable_thinking}
             if tools_allowed:
